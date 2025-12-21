@@ -1,0 +1,5 @@
+{
+  "name": "WinLaunch Studio",
+  "description": "A professional dashboard builder for creating custom Windows executable launchers. Design your app grid, configure executable paths, and generate the configuration needed to build a standalone Windows launcher utility.",
+  "requestFramePermissions": []
+}
