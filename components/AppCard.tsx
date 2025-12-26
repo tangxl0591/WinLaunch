@@ -58,11 +58,19 @@ const AppCard: React.FC<AppCardProps> = ({ item, lang, onEdit, onDelete, isPrevi
 
         {renderIcon("w-16 h-16 mb-4", "text-3xl")}
 
-        <h3 className="text-base font-bold text-white mb-2 truncate w-full px-2">{item.name}</h3>
+        <h3 className="text-base font-bold text-white mb-1 truncate w-full px-2">{item.name}</h3>
         
-        <span className="px-2 py-0.5 bg-slate-800 text-slate-400 rounded-md text-[10px] font-bold uppercase tracking-wider border border-slate-700/50">
-          {item.category}
-        </span>
+        {item.description && (
+          <p className="text-[11px] text-slate-400 line-clamp-2 min-h-[32px] mb-3 px-2 leading-relaxed group-hover:text-slate-300 transition-colors">
+            {item.description}
+          </p>
+        )}
+
+        <div className="mt-auto">
+          <span className="px-2 py-0.5 bg-slate-800/80 text-slate-500 rounded-md text-[9px] font-bold uppercase tracking-wider border border-slate-700/50 group-hover:text-blue-400 group-hover:border-blue-500/30 transition-colors">
+            {item.category}
+          </span>
+        </div>
       </div>
     );
   }

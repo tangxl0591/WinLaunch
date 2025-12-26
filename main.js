@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
 import https from 'https';
+import http from 'http';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -46,7 +47,50 @@ function createWindow() {
   });
 }
 
-// IPC Handlers
+// 通用的远程内容获取助手，支持协议切换、重定向处理和 User-Agent 伪装
+async function fetchRemote(url, options = {}) {
+  const protocol = url.startsWith('https') ? https : http;
+  const defaultOptions = {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
+    },
+    timeout: 8000
+  };
+
+  return new Promise((resolve, reject) => {
+    const req = protocol.get(url, { ...defaultOptions, ...options }, (res) => {
+      // 处理 3xx 重定向
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        const redirectCount = (options._redirectCount || 0) + 1;
+        if (redirectCount > 5) return reject(new Error('Too many redirects'));
+        
+        let nextUrl = res.headers.location;
+        if (!nextUrl.startsWith('http')) {
+          const origin = new URL(url).origin;
+          nextUrl = new URL(nextUrl, origin).href;
+        }
+        return resolve(fetchRemote(nextUrl, { ...options, _redirectCount: redirectCount }));
+      }
+
+      if (res.statusCode !== 200) {
+        return reject(new Error(`HTTP Error: ${res.statusCode}`));
+      }
+
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.on('end', () => resolve({ buffer: Buffer.concat(chunks), headers: res.headers }));
+    });
+
+    req.on('error', reject);
+    req.on('timeout', () => {
+      req.destroy();
+      reject(new Error('Timeout'));
+    });
+  });
+}
+
+// IPC 处理器
 ipcMain.handle('open-file-dialog', async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog({
     properties: ['openFile'],
@@ -68,23 +112,49 @@ ipcMain.handle('get-file-icon', async (event, filePath) => {
   }
 });
 
-// Fetch remote icon and convert to Base64 to satisfy "binary storage" requirement and bypass CORS
-ipcMain.handle('fetch-url-icon', async (event, url) => {
-  return new Promise((resolve) => {
-    https.get(url, (res) => {
-      const chunks = [];
-      res.on('data', (chunk) => chunks.push(chunk));
-      res.on('end', () => {
-        const buffer = Buffer.concat(chunks);
-        const contentType = res.headers['content-type'] || 'image/png';
-        const base64 = buffer.toString('base64');
-        resolve(`data:${contentType};base64,${base64}`);
-      });
-    }).on('error', (e) => {
-      console.error('Fetch URL icon failed:', e);
-      resolve(null);
-    });
-  });
+// 根据网页链接地址获取图标和主题颜色
+ipcMain.handle('fetch-url-info', async (event, targetUrl) => {
+  try {
+    const urlObj = new URL(targetUrl);
+    const domain = urlObj.hostname;
+    // 使用 Google 的高分辨率 Favicon 服务作为最稳定的源
+    const faviconUrl = `https://www.google.com/s2/favicons?domain=${domain}&sz=128`;
+    
+    let base64Icon = null;
+    let themeColor = null;
+
+    // 1. 获取图标
+    try {
+      const iconResult = await fetchRemote(faviconUrl);
+      const contentType = iconResult.headers['content-type'] || 'image/png';
+      base64Icon = `data:${contentType};base64,${iconResult.buffer.toString('base64')}`;
+    } catch (e) {
+      console.error('Fetch icon failed:', e.message);
+    }
+
+    // 2. 尝试抓取网页 HTML 来获取主题颜色
+    try {
+      const htmlResult = await fetchRemote(targetUrl);
+      const html = htmlResult.buffer.toString('utf-8');
+      
+      const themeMatch = html.match(/<meta[^>]+name=["']theme-color["'][^>]+content=["']([^"']+)["']/i) ||
+                        html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']theme-color["']/i);
+      
+      if (themeMatch && themeMatch[1]) {
+        themeColor = themeMatch[1];
+      } else {
+        const tileMatch = html.match(/<meta[^>]+name=["']msapplication-TileColor["'][^>]+content=["']([^"']+)["']/i);
+        if (tileMatch) themeColor = tileMatch[1];
+      }
+    } catch (e) {
+      // 颜色抓取失败不影响图标返回
+    }
+
+    return { icon: base64Icon, themeColor };
+  } catch (err) {
+    console.error('Fetch URL info failed:', err);
+    return null;
+  }
 });
 
 ipcMain.handle('load-storage-file', async (event, fileName) => {

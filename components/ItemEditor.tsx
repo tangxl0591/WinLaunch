@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Sparkles, Loader2, FolderOpen, Image as ImageIcon, Upload, Globe } from 'lucide-react';
-import { LauncherItem, DEFAULT_CATEGORIES } from '../types';
+import { X, Sparkles, Loader2, FolderOpen, Image as ImageIcon, Upload, Globe, ChevronDown } from 'lucide-react';
+import { LauncherItem } from '../types';
 import { suggestAppDetails } from '../services/geminiService';
 
 const electron = (window as any).require ? (window as any).require('electron') : null;
@@ -30,7 +30,8 @@ const translations = {
     pathPlaceholderApp: 'C:\\Programs\\App\\app.exe',
     pathPlaceholderWeb: 'https://www.google.com',
     category: 'Category',
-    categoryPlaceholder: 'Type to create or select...',
+    customCategory: 'Custom Category',
+    categoryPlaceholder: 'Select category...',
     themeColor: 'Theme Color',
     desc: 'Short Description',
     descPlaceholder: 'Brief description...',
@@ -39,9 +40,10 @@ const translations = {
     create: 'Create Item',
     suggest: 'AI Info',
     browse: 'Browse File',
-    fetchWebIcon: 'Fetch Favicon',
+    fetchWebIcon: 'Fetch Icon',
     upload: 'Upload Image',
-    iconPreview: 'Icon Preview'
+    iconPreview: 'Icon Preview',
+    other: 'Add New Category...'
   },
   zh: {
     editApp: '编辑应用程序',
@@ -55,8 +57,9 @@ const translations = {
     pathWeb: '网页链接',
     pathPlaceholderApp: 'C:\\Programs\\App\\app.exe',
     pathPlaceholderWeb: 'https://www.google.com',
-    category: '类别',
-    categoryPlaceholder: '输入以创建或选择...',
+    category: '所属类别',
+    customCategory: '自定义类别名称',
+    categoryPlaceholder: '选择类别...',
     themeColor: '主题颜色',
     desc: '简短描述',
     descPlaceholder: '应用的简要说明...',
@@ -67,7 +70,8 @@ const translations = {
     browse: '浏览文件',
     fetchWebIcon: '获取网站图标',
     upload: '上传图标',
-    iconPreview: '图标预览'
+    iconPreview: '图标预览',
+    other: '添加新分类...'
   }
 };
 
@@ -81,13 +85,14 @@ const ItemEditor: React.FC<ItemEditorProps> = ({ item, defaultType = 'app', isOp
     color: '#3b82f6',
     itemType: 'app'
   });
+  const [isCustomCategory, setIsCustomCategory] = useState(false);
   const [loading, setLoading] = useState(false);
   const [iconLoading, setIconLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const t = translations[lang];
 
-  // Merge default categories with loaded categories
-  const allCategories = Array.from(new Set([...DEFAULT_CATEGORIES, ...existingCategories])).sort();
+  // Use only existing categories passed from App (source of truth is categories.json)
+  const allCategories = Array.from(new Set([...existingCategories])).sort();
 
   useEffect(() => {
     if (item) {
@@ -100,30 +105,37 @@ const ItemEditor: React.FC<ItemEditorProps> = ({ item, defaultType = 'app', isOp
         color: item.color,
         itemType: item.itemType || 'app'
       });
+      setIsCustomCategory(!allCategories.includes(item.category));
     } else {
+      const initialCat = defaultType === 'web' ? 'Web' : 'Other';
       setFormData({
         name: '',
         exePath: '',
         description: '',
         icon: '',
-        category: defaultType === 'web' ? 'Web' : 'Other',
+        category: initialCat,
         color: defaultType === 'web' ? '#10b981' : '#3b82f6',
         itemType: defaultType
       });
+      setIsCustomCategory(false);
     }
-  }, [item, isOpen, defaultType]);
+  }, [item, isOpen, defaultType, existingCategories]);
 
   const handleSuggest = async () => {
     if (!formData.name) return;
     setLoading(true);
     const suggestion = await suggestAppDetails(formData.name);
     if (suggestion) {
+      const newCat = suggestion.category || formData.category;
       setFormData(prev => ({
         ...prev,
         description: suggestion.description || prev.description,
         color: suggestion.color || prev.color,
-        category: suggestion.category || prev.category
+        category: newCat
       }));
+      if (!allCategories.includes(newCat)) {
+        setIsCustomCategory(true);
+      }
     }
     setLoading(false);
   };
@@ -137,7 +149,6 @@ const ItemEditor: React.FC<ItemEditorProps> = ({ item, defaultType = 'app', isOp
         const iconData = await electron.ipcRenderer.invoke('get-file-icon', filePath);
         if (iconData) setFormData(prev => ({ ...prev, icon: iconData }));
         setIconLoading(false);
-        
         if (!formData.name) {
           const fileName = filePath.split(/[\\/]/).pop()?.replace(/\.(exe|lnk|bat|cmd)$/i, '');
           if (fileName) setFormData(prev => ({ ...prev, name: fileName }));
@@ -147,24 +158,32 @@ const ItemEditor: React.FC<ItemEditorProps> = ({ item, defaultType = 'app', isOp
   };
 
   const fetchFavicon = async () => {
-    if (formData.exePath && formData.exePath.startsWith('http')) {
-      try {
-        const url = new URL(formData.exePath);
-        const faviconUrl = `https://www.google.com/s2/favicons?domain=${url.hostname}&sz=128`;
-        setIconLoading(true);
-        if (electron) {
-          // Use main process to fetch and convert to Base64 (satisfies "binary in JSON" and bypasses CORS)
-          const base64Icon = await electron.ipcRenderer.invoke('fetch-url-icon', faviconUrl);
-          if (base64Icon) {
-            setFormData(prev => ({ ...prev, icon: base64Icon }));
-          }
+    let url = formData.exePath.trim();
+    if (!url) return;
+    
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = 'https://' + url;
+      setFormData(prev => ({ ...prev, exePath: url }));
+    }
+
+    setIconLoading(true);
+    try {
+      if (electron) {
+        const result = await electron.ipcRenderer.invoke('fetch-url-info', url);
+        if (result && result.icon) {
+          setFormData(prev => ({ 
+            ...prev, 
+            icon: result.icon,
+            color: result.themeColor || prev.color
+          }));
         } else {
-          setFormData(prev => ({ ...prev, icon: faviconUrl }));
+          throw new Error('Fetch failed');
         }
-        setIconLoading(false);
-      } catch (e) {
-        alert(lang === 'zh' ? '请输入有效的 URL' : 'Please enter a valid URL');
       }
+    } catch (e) {
+      alert(lang === 'zh' ? '获取网站图标失败，请确认链接有效' : 'Failed to fetch icon. Ensure the URL is valid.');
+    } finally {
+      setIconLoading(false);
     }
   };
 
@@ -172,9 +191,7 @@ const ItemEditor: React.FC<ItemEditorProps> = ({ item, defaultType = 'app', isOp
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setFormData(prev => ({ ...prev, icon: reader.result as string }));
-      };
+      reader.onloadend = () => setFormData(prev => ({ ...prev, icon: reader.result as string }));
       reader.readAsDataURL(file);
     }
   };
@@ -182,9 +199,7 @@ const ItemEditor: React.FC<ItemEditorProps> = ({ item, defaultType = 'app', isOp
   if (!isOpen) return null;
 
   const isWeb = formData.itemType === 'web';
-  const modalTitle = item 
-    ? (isWeb ? t.editWeb : t.editApp) 
-    : (isWeb ? t.addWeb : t.addApp);
+  const modalTitle = item ? (isWeb ? t.editWeb : t.editApp) : (isWeb ? t.addWeb : t.addApp);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
@@ -194,7 +209,7 @@ const ItemEditor: React.FC<ItemEditorProps> = ({ item, defaultType = 'app', isOp
             {isWeb ? <Globe className="text-blue-400" size={24} /> : <ImageIcon className="text-emerald-400" size={24} />}
             <h2 className="text-xl font-bold text-white">{modalTitle}</h2>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-white">
+          <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors">
             <X size={20} />
           </button>
         </div>
@@ -209,24 +224,21 @@ const ItemEditor: React.FC<ItemEditorProps> = ({ item, defaultType = 'app', isOp
               >
                 {iconLoading ? (
                   <Loader2 className="animate-spin text-white/50" size={32} />
-                ) : formData.icon && (formData.icon.startsWith('data:') || formData.icon.startsWith('http')) ? (
+                ) : formData.icon ? (
                   <img src={formData.icon} alt="icon" className="w-full h-full object-contain p-4" />
                 ) : (
                   <span className="text-5xl font-bold text-white/90">{formData.name ? formData.name.charAt(0) : (isWeb ? <Globe size={48} className="opacity-20" /> : <ImageIcon size={48} className="opacity-20" />)}</span>
                 )}
-                
                 <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                    <button onClick={() => fileInputRef.current?.click()} className="p-2 bg-white/20 rounded-full hover:bg-white/40 text-white">
                       <Upload size={20} />
                    </button>
                 </div>
               </div>
-              <div className="flex flex-col gap-2">
-                <button onClick={() => fileInputRef.current?.click()} className="text-[10px] bg-slate-800 hover:bg-slate-700 text-slate-300 py-1.5 px-2 rounded-lg flex items-center justify-center gap-1.5 transition-colors border border-slate-700">
-                  <Upload size={12} /> {t.upload}
-                </button>
-                <input ref={fileInputRef} type="file" className="hidden" accept="image/*" onChange={handleFileUpload} />
-              </div>
+              <button onClick={() => fileInputRef.current?.click()} className="w-full text-[10px] bg-slate-800 hover:bg-slate-700 text-slate-300 py-1.5 px-2 rounded-lg flex items-center justify-center gap-1.5 transition-colors border border-slate-700">
+                <Upload size={12} /> {t.upload}
+              </button>
+              <input ref={fileInputRef} type="file" className="hidden" accept="image/*" onChange={handleFileUpload} />
             </div>
 
             <div className="flex-1 space-y-5 w-full">
@@ -243,7 +255,7 @@ const ItemEditor: React.FC<ItemEditorProps> = ({ item, defaultType = 'app', isOp
                   <button
                     onClick={handleSuggest}
                     disabled={loading || !formData.name}
-                    className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white px-4 rounded-xl transition-all flex items-center gap-2 text-xs font-bold"
+                    className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white px-4 rounded-xl transition-all flex items-center gap-2 text-xs font-bold shrink-0"
                   >
                     {loading ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />}
                     {t.suggest}
@@ -261,43 +273,72 @@ const ItemEditor: React.FC<ItemEditorProps> = ({ item, defaultType = 'app', isOp
                     className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-white font-mono text-[11px] focus:outline-none focus:ring-2 focus:ring-blue-500/50"
                     placeholder={isWeb ? t.pathPlaceholderWeb : t.pathPlaceholderApp}
                   />
-                  {!isWeb ? (
-                    <button
-                      onClick={handleBrowse}
-                      className="bg-slate-700 hover:bg-slate-600 text-white px-4 rounded-xl transition-all flex items-center gap-2 text-xs font-bold border border-slate-600"
-                    >
-                      <FolderOpen size={16} />
-                      {t.browse}
-                    </button>
-                  ) : (
+                  {isWeb ? (
                     <button
                       onClick={fetchFavicon}
-                      disabled={iconLoading}
-                      className="bg-slate-700 hover:bg-slate-600 text-white px-4 rounded-xl transition-all flex items-center gap-2 text-xs font-bold border border-slate-600 disabled:opacity-50"
+                      disabled={iconLoading || !formData.exePath}
+                      className="bg-slate-700 hover:bg-slate-600 text-white px-4 rounded-xl transition-all flex items-center gap-2 text-xs font-bold border border-slate-600 shrink-0 disabled:opacity-50"
                     >
                       {iconLoading ? <Loader2 className="animate-spin" size={16} /> : <Globe size={16} />}
                       {t.fetchWebIcon}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleBrowse}
+                      className="bg-slate-700 hover:bg-slate-600 text-white px-4 rounded-xl transition-all flex items-center gap-2 text-xs font-bold border border-slate-600 shrink-0"
+                    >
+                      <FolderOpen size={16} />
+                      {t.browse}
                     </button>
                   )}
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                <div>
+                <div className="relative">
                   <label className="block text-sm font-medium text-slate-400 mb-1.5">{t.category}</label>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      list="category-list"
-                      value={formData.category}
-                      onChange={(e) => setFormData({ ...formData, category: e.target.value })}
-                      className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 text-sm"
-                      placeholder={t.categoryPlaceholder}
-                    />
-                    <datalist id="category-list">
-                      {allCategories.map(cat => <option key={cat} value={cat} />)}
-                    </datalist>
-                  </div>
+                  {!isCustomCategory ? (
+                    <div className="relative">
+                      <select
+                        value={formData.category}
+                        onChange={(e) => {
+                          if (e.target.value === 'CUSTOM') {
+                            setIsCustomCategory(true);
+                            setFormData({ ...formData, category: '' });
+                          } else {
+                            setFormData({ ...formData, category: e.target.value });
+                          }
+                        }}
+                        className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 text-sm appearance-none cursor-pointer pr-10"
+                      >
+                        {allCategories.map(cat => (
+                          <option key={cat} value={cat}>{cat}</option>
+                        ))}
+                        <option value="CUSTOM" className="text-blue-400 font-bold border-t border-slate-700">+ {t.other}</option>
+                      </select>
+                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" size={16} />
+                    </div>
+                  ) : (
+                    <div className="relative">
+                      <input
+                        autoFocus
+                        type="text"
+                        value={formData.category}
+                        onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                        className="w-full bg-slate-800 border border-blue-500/50 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 text-sm"
+                        placeholder={t.customCategory}
+                      />
+                      <button 
+                        onClick={() => {
+                          setIsCustomCategory(false);
+                          setFormData({ ...formData, category: 'Other' });
+                        }}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-400 mb-1.5">{t.themeColor}</label>
@@ -333,12 +374,7 @@ const ItemEditor: React.FC<ItemEditorProps> = ({ item, defaultType = 'app', isOp
         </div>
 
         <div className="p-6 border-t border-slate-800 flex justify-end gap-3 bg-slate-900/50">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-slate-400 hover:text-white transition-colors font-medium text-sm"
-          >
-            {t.cancel}
-          </button>
+          <button onClick={onClose} className="px-4 py-2 text-slate-400 hover:text-white transition-colors font-medium text-sm">{t.cancel}</button>
           <button
             onClick={() => onSave({ ...formData, id: item?.id || crypto.randomUUID() })}
             className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-2.5 rounded-xl font-bold transition-all shadow-lg shadow-blue-900/40 active:scale-95"

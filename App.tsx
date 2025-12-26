@@ -4,7 +4,7 @@ import Sidebar from './components/Sidebar';
 import AppCard from './components/AppCard';
 import ItemEditor from './components/ItemEditor';
 import { LauncherItem, ViewMode, DEFAULT_CATEGORIES } from './types';
-import { Search, Monitor, Rocket, Languages, FolderTree, Globe, Plus, Cpu, Filter } from 'lucide-react';
+import { Search, Monitor, Rocket, Languages, FolderTree, Globe, Plus, Cpu, Filter, Clock } from 'lucide-react';
 
 const electron = (window as any).require ? (window as any).require('electron') : null;
 
@@ -54,7 +54,7 @@ const translations = {
 const App: React.FC = () => {
   const [lang, setLang] = useState<'en' | 'zh'>('zh');
   const [items, setItems] = useState<LauncherItem[]>([]);
-  const [categories, setCategories] = useState<string[]>(DEFAULT_CATEGORIES);
+  const [categories, setCategories] = useState<string[]>([]);
   const [currentView, setCurrentView] = useState<ViewMode>('preview');
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [isTypePickerOpen, setIsTypePickerOpen] = useState(false);
@@ -62,8 +62,34 @@ const App: React.FC = () => {
   const [editorType, setEditorType] = useState<'app' | 'web'>('app');
   const [searchQuery, setSearchQuery] = useState('');
   const [filterCategory, setFilterCategory] = useState<string>('all');
+  const [now, setNow] = useState(new Date());
 
   const t = translations[lang];
+
+  // Clock effect
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Format Date and Time
+  const formattedDate = useMemo(() => {
+    return now.toLocaleDateString(lang === 'zh' ? 'zh-CN' : 'en-US', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      weekday: 'long'
+    });
+  }, [now, lang]);
+
+  const formattedTime = useMemo(() => {
+    return now.toLocaleTimeString(lang === 'zh' ? 'zh-CN' : 'en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    });
+  }, [now, lang]);
 
   // Load Initial Data from File System
   useEffect(() => {
@@ -75,14 +101,28 @@ const App: React.FC = () => {
         const loadedItems = await electron.ipcRenderer.invoke('load-storage-file', 'items');
         const loadedCategories = await electron.ipcRenderer.invoke('load-storage-file', 'categories');
         
-        if (loadedItems) setItems(loadedItems);
-        if (loadedCategories) setCategories(loadedCategories);
+        if (loadedItems) {
+          setItems(loadedItems);
+        }
+
+        // Strictly load categories from JSON. If missing, use defaults and save them.
+        if (loadedCategories && Array.isArray(loadedCategories) && loadedCategories.length > 0) {
+          setCategories(loadedCategories.sort());
+        } else {
+          setCategories(DEFAULT_CATEGORIES.sort());
+          await electron.ipcRenderer.invoke('save-storage-file', { 
+            fileName: 'categories', 
+            data: DEFAULT_CATEGORIES.sort() 
+          });
+        }
+      } else {
+        // Mock data for web preview
+        setCategories(DEFAULT_CATEGORIES);
       }
     };
     init();
   }, []);
 
-  // Save data whenever it changes
   const persist = useCallback(async (newItems: LauncherItem[], newCats: string[]) => {
     if (electron) {
       await electron.ipcRenderer.invoke('save-storage-file', { fileName: 'items', data: newItems });
@@ -103,7 +143,7 @@ const App: React.FC = () => {
       newItems = [...items, item];
     }
     
-    let newCats = categories;
+    let newCats = [...categories];
     if (item.category && !categories.includes(item.category)) {
       newCats = [...categories, item.category].sort();
     }
@@ -152,7 +192,11 @@ const App: React.FC = () => {
   }, [filteredItems, lang]);
 
   const activeCategories = useMemo(() => {
-    return Object.keys(groupedItems).sort();
+    return Object.keys(groupedItems).sort((a, b) => {
+      if (a === 'Web') return -1;
+      if (b === 'Web') return 1;
+      return a.localeCompare(b);
+    });
   }, [groupedItems]);
 
   const handleAddNewClick = () => {
@@ -199,6 +243,8 @@ const App: React.FC = () => {
         categories={categories}
         filterCategory={filterCategory}
         setFilterCategory={setFilterCategory}
+        formattedTime={formattedTime}
+        formattedDate={formattedDate}
       />
 
       <main className="flex-1 flex flex-col h-full overflow-hidden relative">
@@ -216,7 +262,15 @@ const App: React.FC = () => {
             </div>
           </div>
           
-          <div className="flex items-center gap-6">
+          <div className="hidden lg:flex flex-col items-center flex-1">
+            <div className="flex items-center gap-2 text-white font-mono text-sm tracking-[0.2em] font-bold">
+              <Clock size={14} className="text-blue-500" />
+              {formattedTime}
+            </div>
+            <div className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">{formattedDate}</div>
+          </div>
+
+          <div className="flex items-center gap-6 flex-1 justify-end">
             <button 
               onClick={() => setLang(lang === 'en' ? 'zh' : 'en')}
               className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition-colors border border-slate-700"
@@ -304,11 +358,11 @@ const App: React.FC = () => {
                       <FolderTree className="text-blue-500" size={18} />
                       <h3 className="text-sm font-bold text-slate-300 tracking-[0.1em] uppercase">{cat}</h3>
                       <span className="bg-blue-500/10 text-blue-400 text-[10px] px-2 py-0.5 rounded-full font-mono font-bold">
-                        {groupedItems[cat].length}
+                        {groupedItems[cat] ? groupedItems[cat].length : 0}
                       </span>
                     </div>
                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6">
-                      {groupedItems[cat].map(item => (
+                      {groupedItems[cat] && groupedItems[cat].map(item => (
                         <AppCard 
                           key={item.id} 
                           item={item} 

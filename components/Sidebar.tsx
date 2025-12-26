@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { LayoutDashboard, Settings, MonitorPlay, FolderTree, Hash } from 'lucide-react';
+import { LayoutDashboard, Settings, MonitorPlay, FolderTree, Hash, Clock, Calendar } from 'lucide-react';
 import { ViewMode } from '../types';
 
 interface SidebarProps {
@@ -10,6 +10,8 @@ interface SidebarProps {
   categories: string[];
   filterCategory: string;
   setFilterCategory: (cat: string) => void;
+  formattedTime?: string;
+  formattedDate?: string;
 }
 
 const translations = {
@@ -37,7 +39,9 @@ const Sidebar: React.FC<SidebarProps> = ({
   lang, 
   categories, 
   filterCategory, 
-  setFilterCategory 
+  setFilterCategory,
+  formattedTime,
+  formattedDate
 }) => {
   const t = translations[lang];
 
@@ -106,10 +110,21 @@ const Sidebar: React.FC<SidebarProps> = ({
         ))}
       </div>
 
-      <div className="p-4 mt-auto">
-        <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700">
-          <p className="text-xs text-slate-500 uppercase font-bold tracking-wider mb-2">{t.workspace}</p>
-          <p className="text-sm font-medium text-slate-300">{t.defaultProj}</p>
+      <div className="p-6 border-t border-slate-800/50 space-y-4">
+        {/* Time and Date display above brand name */}
+        <div className="flex flex-col items-center gap-1.5 py-3 px-4 rounded-2xl bg-slate-800/30 border border-slate-700/30 shadow-inner">
+          <div className="flex items-center gap-2 text-blue-400 font-mono text-sm font-bold tracking-widest">
+            <Clock size={12} />
+            {formattedTime}
+          </div>
+          <div className="flex items-center gap-1.5 text-slate-500 text-[9px] font-medium uppercase tracking-tighter">
+            <Calendar size={10} />
+            {formattedDate}
+          </div>
+        </div>
+
+        <div className="text-[10px] text-center text-slate-600 font-medium tracking-[0.3em] uppercase opacity-60">
+          WinLaunch Studio
         </div>
       </div>
     </div>
