@@ -8,7 +8,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build && electron-builder --win --x64",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "electron:start": "electron .",
+    "lint": "tsc --noEmit"
   },
   "dependencies": {
     "@google/genai": "^1.34.0",
@@ -35,7 +37,7 @@
       "target": "portable"
     },
     "files": [
-      "dist/**/*",
+      "dist",
       "main.js",
       "package.json"
     ],

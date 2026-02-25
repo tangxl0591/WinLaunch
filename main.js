@@ -41,9 +41,29 @@ function createWindow() {
     return { action: 'deny' };
   });
 
+  // 优先尝试加载开发服务器地址，如果失败或不在开发环境，则加载本地文件
+  const isDev = !app.isPackaged;
+  
+  if (isDev) {
+    // Vite 默认端口是 5173
+    win.loadURL('http://localhost:5173').catch(() => {
+      console.log('Vite dev server not found, falling back to file...');
+      loadStaticFile(win);
+    });
+  } else {
+    loadStaticFile(win);
+  }
+}
+
+function loadStaticFile(win) {
   const indexPath = path.join(__dirname, 'dist', 'index.html');
-  win.loadFile(indexPath).catch(() => {
-    console.log('Dist not found. Run "npm run build" first.');
+  win.loadFile(indexPath).catch((err) => {
+    console.error('Failed to load index.html:', err);
+    // 尝试备选路径（有些打包配置会将 dist 内容直接放在根目录）
+    const fallbackPath = path.join(__dirname, 'index.html');
+    win.loadFile(fallbackPath).catch(() => {
+      console.log('Dist not found. Please run "npm run build" first.');
+    });
   });
 }
 
